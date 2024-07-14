@@ -3,73 +3,83 @@ using Application.Services.AuthService;
 using Application.Services.Repositories;
 using Domain.Entities;
 using MediatR;
-using NArchitecture.Core.Application.Dtos;
 using NArchitecture.Core.Security.Hashing;
-using NArchitecture.Core.Security.JWT;
 
 namespace Application.Features.Auth.Commands.Register;
 
 public class RegisterCommand : IRequest<RegisteredResponse>
 {
-    public UserForRegisterDto UserForRegisterDto { get; set; }
+    public CustomerRegisterDto CustomerForRegisterDto { get; set; }
     public string IpAddress { get; set; }
 
     public RegisterCommand()
     {
-        UserForRegisterDto = null!;
+        CustomerForRegisterDto = null!;
         IpAddress = string.Empty;
     }
 
-    public RegisterCommand(UserForRegisterDto userForRegisterDto, string ipAddress)
+    public RegisterCommand(CustomerRegisterDto customerForRegisterDto, string ipAddress)
     {
-        UserForRegisterDto = userForRegisterDto;
+        CustomerForRegisterDto = customerForRegisterDto;
         IpAddress = ipAddress;
     }
 
     public class RegisterCommandHandler : IRequestHandler<RegisterCommand, RegisteredResponse>
     {
-        private readonly IUserRepository _userRepository;
+        private readonly ICustomerRepository _customerRepository;
         private readonly IAuthService _authService;
         private readonly AuthBusinessRules _authBusinessRules;
+        private readonly IUserOperationClaimRepository _userOperationClaimRepository;
 
         public RegisterCommandHandler(
-            IUserRepository userRepository,
+            ICustomerRepository customerRepository,
             IAuthService authService,
-            AuthBusinessRules authBusinessRules
+            AuthBusinessRules authBusinessRules,
+            IUserOperationClaimRepository userOperationClaimRepository
         )
         {
-            _userRepository = userRepository;
+            _customerRepository = customerRepository;
             _authService = authService;
             _authBusinessRules = authBusinessRules;
+            _userOperationClaimRepository = userOperationClaimRepository;
         }
 
         public async Task<RegisteredResponse> Handle(RegisterCommand request, CancellationToken cancellationToken)
         {
-            await _authBusinessRules.UserEmailShouldBeNotExists(request.UserForRegisterDto.Email);
+            await _authBusinessRules.UserEmailShouldBeNotExists(request.CustomerForRegisterDto.Email);
 
             HashingHelper.CreatePasswordHash(
-                request.UserForRegisterDto.Password,
+                request.CustomerForRegisterDto.Password,
                 passwordHash: out byte[] passwordHash,
                 passwordSalt: out byte[] passwordSalt
             );
-            User newUser =
+            Customer newCustomer =
                 new()
                 {
-                    Email = request.UserForRegisterDto.Email,
+                    FirstName = request.CustomerForRegisterDto.FirstName,
+                    LastName = request.CustomerForRegisterDto.LastName,
+                    DateOfBirth = request.CustomerForRegisterDto.DateOfBirth,
+                    CompanyName = request.CustomerForRegisterDto.CompanyName,
+                    Email = request.CustomerForRegisterDto.Email,
                     PasswordHash = passwordHash,
                     PasswordSalt = passwordSalt,
                 };
-            User createdUser = await _userRepository.AddAsync(newUser);
+            Customer createdUser = await _customerRepository.AddAsync(newCustomer);
 
-            AccessToken createdAccessToken = await _authService.CreateAccessToken(createdUser);
+            // User operation claims
 
-            Domain.Entities.RefreshToken createdRefreshToken = await _authService.CreateRefreshToken(
-                createdUser,
-                request.IpAddress
-            );
-            Domain.Entities.RefreshToken addedRefreshToken = await _authService.AddRefreshToken(createdRefreshToken);
+            List<UserOperationClaim> userOperationClaims = new List<UserOperationClaim>
+            {
+                new UserOperationClaim { UserId = createdUser.Id, OperationClaimId = 25 },
+                new UserOperationClaim { UserId = createdUser.Id, OperationClaimId = 30 },
+                new UserOperationClaim { UserId = createdUser.Id, OperationClaimId = 36 }
+            };
 
-            RegisteredResponse registeredResponse = new() { AccessToken = createdAccessToken, RefreshToken = addedRefreshToken };
+            await _userOperationClaimRepository.AddRangeAsync(userOperationClaims);
+
+            RegisteredResponse registeredResponse = 
+                new() { Email = request.CustomerForRegisterDto.Email, Password = request.CustomerForRegisterDto.Password };
+            
             return registeredResponse;
         }
     }
